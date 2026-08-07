@@ -9,8 +9,6 @@ type IdempotencyStore struct {
 	db *sql.DB
 }
 
-// NewIdempotencyStore creates the processed_transactions table
-// if it doesn't already exist
 func NewIdempotencyStore(db *sql.DB) (*IdempotencyStore, error) {
 	createTable := `
 	CREATE TABLE IF NOT EXISTS processed_transactions (
@@ -26,7 +24,6 @@ func NewIdempotencyStore(db *sql.DB) (*IdempotencyStore, error) {
 	return &IdempotencyStore{db: db}, nil
 }
 
-// HasBeenProcessed checks if this transaction ID already exists
 func (s *IdempotencyStore) HasBeenProcessed(transactionID string) (bool, error) {
 	var id string
 	err := s.db.QueryRow(`
@@ -43,7 +40,6 @@ func (s *IdempotencyStore) HasBeenProcessed(transactionID string) (bool, error) 
 	return true, nil
 }
 
-// MarkAsProcessed records this transaction ID so duplicates are rejected
 func (s *IdempotencyStore) MarkAsProcessed(transactionID string) error {
 	_, err := s.db.Exec(`
 		INSERT OR IGNORE INTO processed_transactions (transaction_id, processed_at)

@@ -9,71 +9,68 @@ import (
 )
 
 const (
-	BroadcastPort = 9999
-	BroadcastAddr = "255.255.255.255:9999"
+	ListenPort = 9999
 )
 
-// Broadcast sends a payment packet to all nodes on the LAN
-// Uses UDP broadcast — no specific target, everyone receives it
-func Broadcast(packet models.PaymentPacket) error {
-	// Resolve the broadcast address
-	addr, err := net.ResolveUDPAddr("udp", BroadcastAddr)
-	if err != nil {
-		return fmt.Errorf("failed to resolve broadcast address: %w", err)
-	}
+var KnownNodes = []string{
+	"127.0.0.1:9998",
+	"127.0.0.1:9997",
+	"127.0.0.1:9996",
+}
 
-	// Open a UDP connection
-	conn, err := net.DialUDP("udp", nil, addr)
-	if err != nil {
-		return fmt.Errorf("failed to open UDP connection: %w", err)
-	}
-	defer conn.Close()
-
-	// Serialize the packet to JSON bytes
+func Broadcast(packet models.PaymentPacket, myPort int) error {
 	data, err := json.Marshal(packet)
 	if err != nil {
 		return fmt.Errorf("failed to serialize packet: %w", err)
 	}
 
-	// Send it — UDP fire and forget
-	// We don't wait for confirmation, don't know who received it
-	_, err = conn.Write(data)
-	if err != nil {
-		return fmt.Errorf("failed to broadcast packet: %w", err)
+	sent := 0
+	for _, nodeAddr := range KnownNodes {
+		addr, err := net.ResolveUDPAddr("udp", nodeAddr)
+		if err != nil {
+			continue
+		}
+
+		conn, err := net.DialUDP("udp", nil, addr)
+		if err != nil {
+			continue
+		}
+
+		_, err = conn.Write(data)
+		conn.Close()
+		if err != nil {
+			continue
+		}
+		sent++
 	}
 
-	fmt.Println("Packet broadcasted:", packet.TransactionID)
+	fmt.Printf("Packet broadcasted to %d nodes: %s\n", sent, packet.TransactionID)
 	return nil
 }
 
-// Listen starts listening for incoming UDP packets from other nodes
-// When a packet arrives, it's passed to the handler function
-func Listen(handler func(models.PaymentPacket)) error {
-	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", BroadcastPort))
+func Listen(port int, handler func(models.PaymentPacket)) error {
+	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return fmt.Errorf("failed to resolve listen address: %w", err)
 	}
 
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to listen on UDP port: %w", err)
+		return fmt.Errorf("failed to listen on UDP port %d: %w", port, err)
 	}
 	defer conn.Close()
 
-	fmt.Println("Listening for packets on UDP port", BroadcastPort)
+	fmt.Printf("Listening for packets on port %d\n", port)
 
-	// Buffer to hold incoming data — 64KB max packet size
 	buf := make([]byte, 65536)
 
 	for {
-		// Block until a packet arrives
 		n, _, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			fmt.Println("Error reading UDP packet:", err)
 			continue
 		}
 
-		// Deserialize the packet
 		var packet models.PaymentPacket
 		err = json.Unmarshal(buf[:n], &packet)
 		if err != nil {
@@ -81,7 +78,6 @@ func Listen(handler func(models.PaymentPacket)) error {
 			continue
 		}
 
-		// Pass to handler — node decides what to do with it
 		go handler(packet)
 	}
-} 	
+}

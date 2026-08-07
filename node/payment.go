@@ -17,7 +17,7 @@ func generateTransactionID() string {
 	return hex.EncodeToString(bytes)
 }
 
-func CreateAndBroadcastPayment(senderUPI string, receiverUPI string, amount float64, publicKeyPath string, hasInternet bool, bankURL string) error {
+func CreateAndBroadcastPayment(senderUPI string, receiverUPI string, amount float64, publicKeyPath string, hasInternet bool, bankURL string, myPort int) error {
 	publicKey, err := crypto.LoadPublicKey(publicKeyPath)
 	if err != nil {
 		return fmt.Errorf("failed to load public key: %w", err)
@@ -55,5 +55,5 @@ func CreateAndBroadcastPayment(senderUPI string, receiverUPI string, amount floa
 	}
 
 	fmt.Println("Node has no internet — broadcasting to nearby nodes")
-	return Broadcast(packet)
+	return Broadcast(packet, myPort)
 }

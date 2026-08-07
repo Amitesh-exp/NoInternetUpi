@@ -14,42 +14,53 @@ import (
 
 func main() {
 	args := os.Args[1:]
-	if len(args) < 2 {
-		fmt.Println("Usage: go run cmd/node/main.go <node-name> <has-internet>")
-		fmt.Println("Example: go run cmd/node/main.go Alice true")
-		fmt.Println("Example: go run cmd/node/main.go Bob false")
+	if len(args) < 3 {
+		fmt.Println("Usage: go run cmd/node/main.go <node-name> <has-internet> <port>")
+		fmt.Println("Example: go run cmd/node/main.go Alice false 9998")
+		fmt.Println("Example: go run cmd/node/main.go Bob true 9997")
 		os.Exit(1)
 	}
 
 	nodeName := args[0]
 	hasInternet := args[1] == "true"
+	port, err := strconv.Atoi(args[2])
+	if err != nil {
+		fmt.Println("Invalid port number")
+		os.Exit(1)
+	}
+
 	bankURL := "http://localhost:8080"
 	publicKeyPath := "bank_public.pem"
 
-	fmt.Printf("Node %s started | Internet: %v\n", nodeName, hasInternet)
-	fmt.Println("Listening for incoming packets from nearby nodes...")
+	fmt.Printf("Node %s started | Internet: %v | Port: %d\n", nodeName, hasInternet, port)
 
-	go node.Listen(func(packet models.PaymentPacket) {
-		fmt.Printf("\n[%s] Received packet: %s\n", nodeName, packet.TransactionID)
+	go func() {
+		err := node.Listen(port, func(packet models.PaymentPacket) {
+			fmt.Printf("\n[%s] Received packet: %s\n", nodeName, packet.TransactionID)
 
-		if time.Now().After(packet.TTL) {
-			fmt.Printf("[%s] Packet expired — ignoring\n", nodeName)
-			return
-		}
+			if time.Now().After(packet.TTL) {
+				fmt.Printf("[%s] Packet expired — ignoring\n", nodeName)
+				return
+			}
 
-		if !hasInternet {
-			fmt.Printf("[%s] No internet — cannot forward\n", nodeName)
-			return
-		}
+			if !hasInternet {
+				fmt.Printf("[%s] No internet — cannot forward\n", nodeName)
+				return
+			}
 
-		fmt.Printf("[%s] Has internet — forwarding to bank\n", nodeName)
-		err := node.ForwardToBank(packet, bankURL)
+			fmt.Printf("[%s] Has internet — forwarding to bank\n", nodeName)
+			err := node.ForwardToBank(packet, bankURL)
+			if err != nil {
+				fmt.Printf("[%s] Forward failed: %v\n", nodeName, err)
+				return
+			}
+			fmt.Printf("[%s] Forward successful\n", nodeName)
+		})
 		if err != nil {
-			fmt.Printf("[%s] Forward failed: %v\n", nodeName, err)
-			return
+			fmt.Println("Listener error:", err)
+			os.Exit(1)
 		}
-		fmt.Printf("[%s] Forward successful\n", nodeName)
-	})
+	}()
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -80,7 +91,7 @@ func main() {
 				continue
 			}
 
-			err = node.CreateAndBroadcastPayment(senderUPI, receiverUPI, amount, publicKeyPath, hasInternet, bankURL)
+			err = node.CreateAndBroadcastPayment(senderUPI, receiverUPI, amount, publicKeyPath, hasInternet, bankURL, port)
 			if err != nil {
 				fmt.Println("Payment failed:", err)
 			}

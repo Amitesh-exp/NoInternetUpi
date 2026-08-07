@@ -111,10 +111,8 @@ func EncryptPayload(payload []byte, bankPublicKey *rsa.PublicKey) ([]byte, []byt
 	return encryptedPayload, encryptedAESKey, nil
 }
 
-// DecryptPayload decrypts the payment data — only the bank can do this
 func DecryptPayload(encryptedPayload []byte, encryptedAESKey []byte, bankPrivateKey *rsa.PrivateKey) ([]byte, error) {
 
-	// Step 1: Decrypt the AES key using bank's RSA private key
 	aesKey, err := rsa.DecryptOAEP(
 		sha256.New(),
 		rand.Reader,
@@ -126,7 +124,6 @@ func DecryptPayload(encryptedPayload []byte, encryptedAESKey []byte, bankPrivate
 		return nil, err
 	}
 
-	// Step 2: Use the AES key to decrypt the payload
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return nil, err
@@ -137,7 +134,6 @@ func DecryptPayload(encryptedPayload []byte, encryptedAESKey []byte, bankPrivate
 		return nil, err
 	}
 
-	// Split nonce and ciphertext
 	nonceSize := gcm.NonceSize()
 	if len(encryptedPayload) < nonceSize {
 		return nil, errors.New("encrypted payload too short")
@@ -145,8 +141,7 @@ func DecryptPayload(encryptedPayload []byte, encryptedAESKey []byte, bankPrivate
 
 	nonce, ciphertext := encryptedPayload[:nonceSize], encryptedPayload[nonceSize:]
 
-	// Open decrypts and also verifies integrity
-	// If anyone tampered with the payload, this returns an error
+
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return nil, errors.New("decryption failed — payload may have been tampered with")

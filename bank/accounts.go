@@ -14,8 +14,6 @@ type AccountStore struct {
 	db *sql.DB
 }
 
-// NewAccountStore opens the SQLite database and creates
-// the accounts table if it doesn't already exist
 func NewAccountStore(db *sql.DB) (*AccountStore, error) {
 	createTable := `
 	CREATE TABLE IF NOT EXISTS accounts (
@@ -31,8 +29,6 @@ func NewAccountStore(db *sql.DB) (*AccountStore, error) {
 	return &AccountStore{db: db}, nil
 }
 
-// Seed adds initial accounts if they don't exist yet
-// This is how we set up test accounts with starting balances
 func (s *AccountStore) Seed() error {
 	accounts := []Account{
 		{"alice@upi", 1000.00},
@@ -52,7 +48,6 @@ func (s *AccountStore) Seed() error {
 	return nil
 }
 
-// GetBalance returns current balance for a UPI ID
 func (s *AccountStore) GetBalance(upi string) (float64, error) {
 	var balance float64
 	err := s.db.QueryRow(`
@@ -65,21 +60,15 @@ func (s *AccountStore) GetBalance(upi string) (float64, error) {
 	return balance, err
 }
 
-// Transfer moves amount from sender to receiver atomically
-// Atomic means both deduction and addition happen together
-// or neither happens — no partial transfers ever
 func (s *AccountStore) Transfer(senderUPI string, receiverUPI string, amount float64) error {
 
-	// Begin a transaction — this is what makes it atomic
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 
-	// If anything goes wrong below, undo everything
 	defer tx.Rollback()
 
-	// Check sender balance
 	var senderBalance float64
 	err = tx.QueryRow(`
 		SELECT balance FROM accounts WHERE upi = ?`, senderUPI,
@@ -96,7 +85,6 @@ func (s *AccountStore) Transfer(senderUPI string, receiverUPI string, amount flo
 		return errors.New("insufficient balance")
 	}
 
-	// Deduct from sender
 	_, err = tx.Exec(`
 		UPDATE accounts SET balance = balance - ? WHERE upi = ?`,
 		amount, senderUPI,
@@ -105,7 +93,6 @@ func (s *AccountStore) Transfer(senderUPI string, receiverUPI string, amount flo
 		return err
 	}
 
-	// Add to receiver
 	_, err = tx.Exec(`
 		UPDATE accounts SET balance = balance + ? WHERE upi = ?`,
 		amount, receiverUPI,
@@ -114,6 +101,5 @@ func (s *AccountStore) Transfer(senderUPI string, receiverUPI string, amount flo
 		return err
 	}
 
-	// Commit — only now do the changes actually save
 	return tx.Commit()
 }

@@ -1,5 +1,6 @@
 package main
 import (
+	"crypto/rsa"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,51 +14,43 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// BankServer holds everything the server needs to handle requests
 type BankServer struct {
 	accounts    *bank.AccountStore
 	idempotency *bank.IdempotencyStore
-	privateKey  interface{}
+	privateKey  *rsa.PrivateKey
 }
 
-// PaymentRequest is what relay nodes send to the bank
 type PaymentRequest struct {
 	Packet models.PaymentPacket `json:"packet"`
 }
 
-// PaymentResponse is what the bank sends back
 type PaymentResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
 
 func main() {
-	// Open database once — shared by both stores
 	db, err := sql.Open("sqlite", "bank.db")
 	if err != nil {
 		log.Fatal("Failed to open database:", err)
 	}
 	defer db.Close()
 
-	// Set up account store
 	accountStore, err := bank.NewAccountStore(db)
 	if err != nil {
 		log.Fatal("Failed to create account store:", err)
 	}
 
-	// Seed test accounts
 	err = accountStore.Seed()
 	if err != nil {
 		log.Fatal("Failed to seed accounts:", err)
 	}
 
-	// Set up idempotency store using same db connection
 	idempotencyStore, err := bank.NewIdempotencyStore(db)
 	if err != nil {
 		log.Fatal("Failed to create idempotency store:", err)
 	}
 
-	// Load bank's private key — only bank has this
 	privateKey, err := crypto.LoadPrivateKey("bank_private.pem")
 	if err != nil {
 		log.Fatal("Failed to load private key:", err)
@@ -69,7 +62,6 @@ func main() {
 		privateKey:  privateKey,
 	}
 
-	// Register routes
 	http.HandleFunc("/pay", server.handlePayment)
 	http.HandleFunc("/balance", server.handleBalance)
 
@@ -84,7 +76,6 @@ func (s *BankServer) handlePayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decode the incoming packet
 	var req PaymentRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
@@ -94,51 +85,51 @@ func (s *BankServer) handlePayment(w http.ResponseWriter, r *http.Request) {
 
 	packet := req.Packet
 
-	// Check TTL — reject expired packets
 	if time.Now().After(packet.TTL) {
 		respond(w, false, "packet expired — TTL exceeded", http.StatusBadRequest)
 		return
 	}
 
-	// Check idempotency — reject duplicate transaction IDs
 	alreadyProcessed, err := s.idempotency.HasBeenProcessed(packet.TransactionID)
 	if err != nil {
 		respond(w, false, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if alreadyProcessed {
-		// Return success because the transaction DID go through
-		// just not this time — this is a duplicate
 		respond(w, true, "already processed", http.StatusOK)
 		return
 	}
 
-	// Decrypt the payload using bank's private key
-	privateKey, ok := s.privateKey.(interface {
-		Decrypt([]byte) ([]byte, error)
-	})
-	_ = privateKey
-	_ = ok
-
-	// For now verify the outer packet fields directly
-	// Full decryption wired in next step
-	if packet.SenderUPI == "" || packet.ReceiverUPI == "" || packet.Amount <= 0 {
-		respond(w, false, "invalid payment details", http.StatusBadRequest)
+	decryptedBytes, err := crypto.DecryptPayload(packet.EncryptedPayload, packet.EncryptedAESKey, s.privateKey)
+	if err != nil {
+		respond(w, false, "decryption failed — packet may be tampered", http.StatusBadRequest)
 		return
 	}
 
-	// Process the transfer
-	err = s.accounts.Transfer(packet.SenderUPI, packet.ReceiverUPI, packet.Amount)
+	var innerPayload map[string]interface{}
+	err = json.Unmarshal(decryptedBytes, &innerPayload)
+	if err != nil {
+		respond(w, false, "invalid inner payload", http.StatusBadRequest)
+		return
+	}
+
+	senderUPI, ok1 := innerPayload["sender_upi"].(string)
+	receiverUPI, ok2 := innerPayload["receiver_upi"].(string)
+	amount, ok3 := innerPayload["amount"].(float64)
+
+	if !ok1 || !ok2 || !ok3 || senderUPI == "" || receiverUPI == "" || amount <= 0 {
+		respond(w, false, "invalid payment details in payload", http.StatusBadRequest)
+		return
+	}
+
+	err = s.accounts.Transfer(senderUPI, receiverUPI, amount)
 	if err != nil {
 		respond(w, false, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Mark as processed — any future duplicates will be rejected
 	err = s.idempotency.MarkAsProcessed(packet.TransactionID)
 	if err != nil {
-		// Transfer succeeded but we couldn't mark it
-		// Log this — it means duplicates could go through
 		log.Println("WARNING: could not mark transaction as processed:", packet.TransactionID)
 	}
 
@@ -164,7 +155,6 @@ func (s *BankServer) handleBalance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// respond is a helper to write consistent JSON responses
 func respond(w http.ResponseWriter, success bool, message string, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
